@@ -50,13 +50,19 @@ jobs:
         shell: cmd
         run: |
           cd edk2
-          
-          :: Build EDK II C BaseTools using Visual Studio
-          set EDK_TOOLS_PATH=%CD%\BaseTools
-          call edksetup.sh Reconfig
-          nmake -f %EDK_TOOLS_PATH%\Source\C\Makefiles\ms.mak
-          
-          :: Build doom.efi targeting VS2019 / VS2022 toolchain (VS2015x86)
+
+          :: Set up EDK II environment using native Windows scripts
+          call edksetup.bat Reconfig
+
+          :: Compile BaseTools C tools for Windows using MSVC
+          cd BaseTools
+          nmake -f WinNt/Makefile
+          cd ..
+
+          :: Re-run setup to register 'build' command into PATH
+          call edksetup.bat
+
+          :: Build doom.efi targeting VS2015/VS2019/VS2022 toolchain
           build -a X64 -t VS2015x86 -p AppPkg/AppPkg.dsc -b DEBUG
 
       - name: Collect Output
