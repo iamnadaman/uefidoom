@@ -1,34 +1,82 @@
-# This is a basic workflow to help you get started with Actions
+name: Build UEFI Doom
 
-name: CI
-
-# Controls when the action will run. Triggers the workflow on push or pull request
-# events but only for the master branch
 on:
   push:
-    branches: [ master ]
+    branches: [ main, master ]
   pull_request:
-    branches: [ master ]
+    branches: [ main, master ]
   workflow_dispatch:
 
-# A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
-  # This workflow contains a single job called "build"
   build:
-    # The type of runner that the job will run on
-    runs-on: windows-latest
+    runs-on: ubuntu-22.04
 
-    # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
-    # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
-    - uses: actions/checkout@v2
+      - name: Checkout uefidoom repository
+        uses: actions/checkout@v4
+        with:
+          path: uefidoom
 
-    # Runs a single command using the runners shell
-    - name: Run a one-line script
-      run: Get-ChildItem Env:GITHUB_WORKSPACE
+      - name: Install Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            uuid-dev \
+            iasl \
+            git \
+            nasm \
+            python3 \
+            bison \
+            flex
 
-    # Runs a set of commands using the runners shell
-    - name: Run a multi-line script
-      run: |
-        echo Add other actions to build,
-        echo test, and deploy your project.
+      - name: Checkout EDK II and EDK II LibC
+        run: |
+          # Clone EDK II core repository
+          git clone --recursive https://github.com/tianocore/edk2.git edk2
+          
+          # Clone EDK II LibC repository
+          git clone https://github.com/tianocore/edk2-libc.git edk2-libc
+          
+          # Merge edk2-libc into main edk2 tree
+          cp -r edk2-libc/* edk2/
+
+      - name: Inject uefidoom into EDK II
+        run: |
+          # Move uefidoom into AppPkg/Applications/
+          mkdir -p edk2/AppPkg/Applications
+          cp -r uefidoom edk2/AppPkg/Applications/uefidoom
+
+          # Add required SerialPortLib entry under [LibraryClasses] in AppPkg.dsc
+          sed -i '/\[LibraryClasses\]/a \  SerialPortLib|PcAtChipsetPkg/Library/SerialIoLib/SerialIoLib.inf' edk2/AppPkg/AppPkg.dsc
+
+          # Add doom.inf entry under [Components] in AppPkg.dsc
+          sed -i '/\[Components\]/a \  AppPkg/Applications/uefidoom/doom.inf' edk2/AppPkg/AppPkg.dsc
+
+      - name: Build EDK II BaseTools
+        run: |
+          cd edk2
+          make -C BaseTools
+
+      - name: Build doom.efi
+        run: |
+          cd edk2
+          # Initialize EDK2 environment
+          export EDK_TOOLS_PATH=$PWD/BaseTools
+          source edksetup.sh
+          
+          # Run EDK II Build tool targeting x86_64 GCC5
+          build -a X64 -t GCC5 -p AppPkg/AppPkg.dsc -b DEBUG
+
+      - name: Prepare Artifacts
+        run: |
+          mkdir build_output
+          # Find and copy generated binary
+          cp edk2/Build/AppPkg/DEBUG_GCC5/X64/doom.efi build_output/ || \
+          find edk2/Build -name "doom.efi" -exec cp {} build_output/ \;
+
+      - name: Upload doom.efi Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: doom-efi-binary
+          path: build_output/doom.efi
